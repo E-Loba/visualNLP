@@ -10,32 +10,9 @@ from tensorflow.keras.applications import efficientnet
 from tensorflow.keras.layers import TextVectorization
 
 
-seed = 111
-np.random.seed(seed)
-tf.random.set_seed(seed)
-
-# Path to the images
-IMAGES_PATH = "Flicker8k_Dataset"
-
-# Desired image dimensions
-IMAGE_SIZE = (299, 299)
-
-# Vocabulary size
-VOCAB_SIZE = 10000
-
-# Fixed length allowed for any sequence
-SEQ_LENGTH = 25
-
-# Dimension for the image embeddings and token embeddings
-EMBED_DIM = 512
-
-# Per-layer units in the feed-forward network
-FF_DIM = 512
-
-# Other training parameters
-BATCH_SIZE = 64
-EPOCHS = 30
-AUTOTUNE = tf.data.AUTOTUNE
+# seed = 111
+# np.random.seed(seed)
+# tf.random.set_seed(seed)
 
 
 def load_captions_data(filename):
@@ -130,10 +107,10 @@ def process_input(img_path, captions):
     return decode_and_resize(img_path), vectorization(captions)
 
 
-def make_dataset(images, captions):
+def make_dataset(images, captions, process_=process_input):
     dataset = tf.data.Dataset.from_tensor_slices((images, captions))
     dataset = dataset.shuffle(len(images))
-    dataset = dataset.map(process_input, num_parallel_calls=AUTOTUNE)
+    dataset = dataset.map(process_, num_parallel_calls=AUTOTUNE)
     dataset = dataset.batch(BATCH_SIZE).prefetch(AUTOTUNE)
 
     return dataset
@@ -311,8 +288,11 @@ class ImageCaptioningModel(keras.Model):
 
     def _compute_caption_loss_and_acc(self, img_embed, batch_seq, training=True):
         encoder_out = self.encoder(img_embed, training=training)
+        #print(f"encoder out shape: {encoder_out.shape}")
         batch_seq_inp = batch_seq[:, :-1]
+        #print(f"text input shape: {batch_seq_inp.shape}")
         batch_seq_true = batch_seq[:, 1:]
+        #print(f"text output shape: {batch_seq_true.shape}")
         mask = tf.math.not_equal(batch_seq_true, 0)
         batch_seq_pred = self.decoder(
             batch_seq_inp, encoder_out, training=training, mask=mask
@@ -340,7 +320,7 @@ class ImageCaptioningModel(keras.Model):
                 loss, acc = self._compute_caption_loss_and_acc(
                     img_embed, batch_seq[:, i, :], training=True
                 )
-
+                # print(f"image embedding shape: {img_embed.shape}")
                 # 3. Update loss and accuracy
                 batch_loss += loss
                 batch_acc += acc
@@ -425,9 +405,7 @@ def generate_caption(caption_model, valid_images, max_decoded_sentence_length, i
 
     # Read the image from the disk
     sample_img = decode_and_resize(sample_img)
-    img = sample_img.numpy().clip(0, 255).astype(np.uint8)
-    plt.imshow(img)
-    plt.show()
+    img_ = sample_img.numpy().clip(0, 255).astype(np.uint8)
 
     # Pass the image to the CNN
     img = tf.expand_dims(sample_img, 0)
@@ -452,6 +430,9 @@ def generate_caption(caption_model, valid_images, max_decoded_sentence_length, i
 
     decoded_caption = decoded_caption.replace("<start> ", "")
     decoded_caption = decoded_caption.replace(" <end>", "").strip()
+    plt.imshow(img_)
+    plt.text(1,1, decoded_caption, color="pink", fontdict={"fontsize": 14, "fontweight": "bold", "ha": "left", "va": "baseline"})
+    plt.show()
     print("Predicted Caption: ", decoded_caption)
 
 
@@ -460,9 +441,9 @@ def custom_standardization(input_string):
     return tf.strings.regex_replace(lowercase, "[%s]" % re.escape(strip_chars), "")
 
 
-def make_datasets(raw=False):
+def make_datasets(raw=False, process_func=None):
     # Load the dataset
-    captions_mapping, text_data = load_captions_data("Flickr8k.token.txt")
+    captions_mapping, text_data = load_captions_data(DATA_FILE)
 
     # Split the dataset into training and validation sets
     train_data, valid_data = train_val_split(captions_mapping)
@@ -480,27 +461,18 @@ def make_datasets(raw=False):
         ]
     )
     if raw:
-        return train_data, valid_data, text_data, image_augmentation
+        return train_data, valid_data, text_data, vectorization, image_augmentation
     # Pass the list of images and the list of corresponding captions
-    train_dataset = make_dataset(list(train_data.keys()), list(train_data.values()))
+    train_dataset = make_dataset(list(train_data.keys()), list(train_data.values()), process_=process_func)
 
-    valid_dataset = make_dataset(list(valid_data.keys()), list(valid_data.values()))
+    valid_dataset = make_dataset(list(valid_data.keys()), list(valid_data.values()), process_=process_func)
 
-    return train_dataset, valid_dataset, image_augmentation
+    return train_dataset, valid_dataset, vectorization, image_augmentation
 
 
-vectorization = TextVectorization(
-    max_tokens=VOCAB_SIZE,
-    output_mode="int",
-    output_sequence_length=SEQ_LENGTH,
-    standardize=custom_standardization,
-)
-strip_chars = "!\"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"
-strip_chars = strip_chars.replace("<", "")
-strip_chars = strip_chars.replace(">", "")
 def do_things():
     # Load the dataset
-    captions_mapping, text_data = load_captions_data("Flickr8k.token.txt")
+    captions_mapping, text_data = load_captions_data(DATA_FILE)
 
     # Split the dataset into training and validation sets
     train_data, valid_data = train_val_split(captions_mapping)
@@ -557,16 +529,44 @@ def do_things():
     max_decoded_sentence_length = SEQ_LENGTH - 1
     valid_images = list(valid_data.keys())
 
-    for _ in range(3):
+    for _ in range(10):
         generate_caption(caption_model, valid_images, max_decoded_sentence_length, index_lookup)
     return
 
 
-if __name__ == "__main__":
-    train, valid, text, aug = make_datasets(raw=True)
-    train_1 = list(train.keys())[0]
-    print(f"{train_1}: {train[train_1]}")
-    valid_1 = list(valid.keys())[0]
-    print(f"{valid_1}: {valid[valid_1]}")
+# Path to the images
+IMAGES_PATH = "../Flicker8k_Dataset"
+# Desired image dimensions
+IMAGE_SIZE = (299, 299)
+# Vocabulary size
+VOCAB_SIZE = 10000
+# Fixed length allowed for any sequence
+SEQ_LENGTH = 25
+# Dimension for the image embeddings and token embeddings
+EMBED_DIM = 512
+# Per-layer units in the feed-forward network
+FF_DIM = 512
+# Other training parameters
+BATCH_SIZE = 64
+EPOCHS = 30
+AUTOTUNE = tf.data.AUTOTUNE
 
-    # do_things()
+DATA_FILE = "../Flickr8k.token.txt"
+
+vectorization = TextVectorization(
+    max_tokens=VOCAB_SIZE,
+    output_mode="int",
+    output_sequence_length=SEQ_LENGTH,
+    standardize=custom_standardization,
+)
+strip_chars = "!\"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"
+strip_chars = strip_chars.replace("<", "")
+strip_chars = strip_chars.replace(">", "")
+if __name__ == "__main__":
+    # train, valid, text, aug = make_datasets(raw=True)
+    # train_1 = list(train.keys())[0]
+    # print(f"{train_1}: {train[train_1]}")
+    # valid_1 = list(valid.keys())[0]
+    # print(f"{valid_1}: {valid[valid_1]}")
+
+    do_things()
