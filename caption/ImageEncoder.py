@@ -9,22 +9,28 @@ from torch import nn
 from torch.nn.functional import relu
 from transformers import T5ForConditionalGeneration
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
-from transformers.models.t5.modeling_t5 import T5Block, T5LayerNorm, T5Stack
+from transformers.models.t5.modeling_t5 import T5LayerNorm, T5PreTrainedModel, T5Stack
+from transformers.modeling_utils import PreTrainedModel
 
 
 class ImageEncoder(T5Stack):
     def __init__(self, config, img_dim=None):
-        super().__init__(config, embed_tokens=None)
+        super().__init__(config)
         assert img_dim
         assert self.is_decoder==False
         # self.block = nn.ModuleList(
         #     [T5Block(config, has_relative_attention_bias=bool(i==0)) for i in range(config.num_layers)]
         # )
-        self.norm_1 = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.norm_1 = T5LayerNorm(img_dim, eps=config.layer_norm_epsilon)
         # self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dense = nn.Linear(img_dim, config.d_model)
         self.dropout = None
         self.is_decoder = False
+        #super().post_init()
+        # Model parallel
+        self.model_parallel = False
+        self.device_map = None
+        self.gradient_checkpointing = False
 
     def forward(
         self,
@@ -151,10 +157,10 @@ class ImageEncoder(T5Stack):
                     attention_mask=extended_attention_mask,
                     position_bias=position_bias,
                     encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_extended_attention_mask,
+                    encoder_attention_mask=None,
                     encoder_decoder_position_bias=encoder_decoder_position_bias,
-                    layer_head_mask=layer_head_mask,
-                    cross_attn_layer_head_mask=cross_attn_layer_head_mask,
+                    layer_head_mask=None,
+                    cross_attn_layer_head_mask=None,
                     past_key_value=past_key_value,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
@@ -224,3 +230,5 @@ class T5ForImageCaptioning(T5ForConditionalGeneration):
         encoder_config.use_cache = False
         encoder_config.is_encoder_decoder = False
         self.encoder = ImageEncoder(encoder_config, img_dim=img_dim)
+
+        #super().post_init()

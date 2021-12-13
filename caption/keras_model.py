@@ -107,12 +107,28 @@ def process_input(img_path, captions):
     return decode_and_resize(img_path), vectorization(captions)
 
 
-def make_dataset(images, captions, process_=process_input):
+def make_dataset(images, captions):
     dataset = tf.data.Dataset.from_tensor_slices((images, captions))
     dataset = dataset.shuffle(len(images))
-    dataset = dataset.map(process_, num_parallel_calls=AUTOTUNE)
+    dataset = dataset.map(process_input, num_parallel_calls=AUTOTUNE)
     dataset = dataset.batch(BATCH_SIZE).prefetch(AUTOTUNE)
 
+    return dataset
+
+
+def make_tf_dataset(images, raw_captions, my_tokeniser, mx_ln, batch_size):
+    captions = []
+    for raw_batch in raw_captions:
+        batch = my_tokeniser(raw_batch, padding="max_length", max_length=mx_ln, truncation=True)["input_ids"]
+            # print(tokens_)
+            # print(type(tokens_))
+            # print(len(tokens_))
+            # batch.append(tokens_)
+        captions.append(batch)
+    dataset = tf.data.Dataset.from_tensor_slices((images, captions))
+    dataset = dataset.shuffle(len(images))
+    dataset = dataset.map(lambda x_, y_: (decode_and_resize(x_), y_), num_parallel_calls=AUTOTUNE)
+    dataset = dataset.batch(batch_size).prefetch(AUTOTUNE)
     return dataset
 
 
@@ -125,6 +141,9 @@ def get_cnn_model():
     base_model_out = base_model.output
     base_model_out = layers.Reshape((-1, base_model_out.shape[-1]))(base_model_out)
     cnn_model = keras.models.Model(base_model.input, base_model_out)
+    print("\nImage Convolutional Net")
+    print(cnn_model.summary())
+    print("\n")
     return cnn_model
 
 
@@ -441,7 +460,7 @@ def custom_standardization(input_string):
     return tf.strings.regex_replace(lowercase, "[%s]" % re.escape(strip_chars), "")
 
 
-def make_datasets(raw=False, process_func=None):
+def make_datasets(raw, my_tok, mx_len, batch_size):
     # Load the dataset
     captions_mapping, text_data = load_captions_data(DATA_FILE)
 
@@ -461,13 +480,13 @@ def make_datasets(raw=False, process_func=None):
         ]
     )
     if raw:
-        return train_data, valid_data, text_data, vectorization, image_augmentation
+        return train_data, valid_data, text_data, image_augmentation
     # Pass the list of images and the list of corresponding captions
-    train_dataset = make_dataset(list(train_data.keys()), list(train_data.values()), process_=process_func)
+    train_dataset = make_tf_dataset(list(train_data.keys()), list(train_data.values()), my_tokeniser=my_tok, mx_ln=mx_len, batch_size=batch_size)
 
-    valid_dataset = make_dataset(list(valid_data.keys()), list(valid_data.values()), process_=process_func)
+    valid_dataset = make_tf_dataset(list(valid_data.keys()), list(valid_data.values()), my_tokeniser=my_tok, mx_ln=mx_len, batch_size=batch_size)
 
-    return train_dataset, valid_dataset, vectorization, image_augmentation
+    return train_dataset, valid_dataset, image_augmentation
 
 
 def do_things():
@@ -524,6 +543,7 @@ def do_things():
         callbacks=[early_stopping],
     )
 
+    #train_dataset.shuffle()
     vocab = vectorization.get_vocabulary()
     index_lookup = dict(zip(range(len(vocab)), vocab))
     max_decoded_sentence_length = SEQ_LENGTH - 1
